@@ -170,6 +170,7 @@ helm repo update
 2. Create a Kubernetes secret for the API key:
 
 ```bash
+kubectl create namespace datadog
 kubectl create secret generic datadog-secret \
   --from-literal api-key=<your-datadog-api-key> \
   --namespace datadog
