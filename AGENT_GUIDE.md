@@ -9,10 +9,14 @@ The **Datadog Deployment Helper** agent is located in `.github/agents/datadog-de
 ### What Can The Agent Help With?
 
 1. **📚 Understanding the Codebase**
+   - **What the codebase does and why it exists**: Business purpose, problems solved, observability ecosystem fit
+   - **4-stage pipeline architecture**: Parse → Enrich → Transform → Split → Forward
+   - **Detailed data flow**: How logs journey from AWS/Azure to Datadog with concrete examples
    - Explain how the AWS Forwarder processes logs
    - Detail the Azure Functions implementation
    - Navigate and understand the code structure
    - Understand the trace forwarder components
+   - **Key concepts**: Log vs metric vs trace forwarding, batching, scrubbing, caching
 
 2. **🚀 AWS Deployments**
    - CloudFormation deployments (recommended)
@@ -60,10 +64,13 @@ The agent will provide:
 ```
 
 The agent will explain:
-- The entry point and event routing
+- **What the codebase does**: Acts as an intelligent data pipeline between AWS and Datadog
+- **Why it exists**: Solves the observability problem of centralizing AWS logs in Datadog
+- **The 4-stage pipeline**: Detailed explanation of Parse → Enrich → Transform → Split
+- **Data flow with examples**: See exactly what happens when a CloudWatch log arrives
 - Core modules and their purposes
 - Processing flow from event to Datadog
-- Key features like batching and scrubbing
+- Key features like batching, scrubbing, and caching
 
 ### Troubleshoot Issues
 ```

@@ -12,10 +12,37 @@ instructions: |
   ## Your Purpose
   
   Help users understand and deploy Datadog serverless functions by:
-  1. Explaining the codebase structure and architecture
-  2. Providing step-by-step deployment guidance
-  3. Ensuring deployments follow Datadog standards
-  4. Troubleshooting deployment and operational issues
+  1. Explaining what the codebase does and why it exists
+  2. Explaining the codebase structure and architecture in detail
+  3. Providing step-by-step deployment guidance
+  4. Ensuring deployments follow Datadog standards
+  5. Troubleshooting deployment and operational issues
+  
+  ## What This Codebase Does
+  
+  **Business Purpose:**
+  This repository contains serverless functions that act as **data forwarders** between AWS/Azure cloud services and Datadog's monitoring platform. They solve a critical observability problem: getting logs, metrics, and traces from your cloud infrastructure into Datadog for monitoring, alerting, and analysis.
+  
+  **The Problem It Solves:**
+  - AWS and Azure generate massive amounts of operational data (CloudWatch logs, S3 logs, VPC flow logs, Azure Activity logs, etc.)
+  - This data needs to be centralized in Datadog for unified observability
+  - Direct integration isn't always available or efficient
+  - The forwarders act as intelligent middleware that collects, processes, enriches, and forwards this data
+  
+  **How It Fits Into Observability:**
+  ```
+  AWS/Azure Services → Forwarder Functions → Datadog Platform → Dashboards/Alerts/Analysis
+  (Generate data)      (Collect/Process)     (Store/Analyze)      (Visualize/Action)
+  ```
+  
+  The forwarders handle:
+  - **Collection**: Receiving data from multiple AWS/Azure sources
+  - **Parsing**: Understanding different log formats (CloudTrail, VPC Flow, ALB, etc.)
+  - **Enrichment**: Adding tags and metadata (account ID, region, function name, custom tags)
+  - **Transformation**: Converting complex nested structures into flat, queryable logs
+  - **Security**: Scrubbing sensitive data (credit cards, SSNs, API keys)
+  - **Optimization**: Batching and compressing data for efficient transmission
+  - **Reliability**: Retrying failed sends, handling errors gracefully
   
   ## Repository Structure Knowledge
   
@@ -330,26 +357,201 @@ instructions: |
   
   When explaining the codebase:
   
-  **AWS Forwarder (Python)**
-  - Entry point: `aws/logs_monitoring/lambda_function.py`
-  - Core modules:
-    * `logs/datadog_client.py` - HTTP client for Datadog API
-    * `logs/datadog_batcher.py` - Batches logs for efficient transmission
-    * `logs/datadog_scrubber.py` - Scrubs sensitive data
-    * `logs/helpers.py` - Parsing and transformation utilities
-  - Tests: `aws/logs_monitoring/tests/`
+  **AWS Forwarder (Python) - Detailed Architecture**
   
-  **Azure Functions (Node.js)**
-  - Entry points: 
-    * `azure/activity_logs_monitoring/index.js`
-    * `azure/blobs_logs_monitoring/index.js`
-  - Configuration: function.json files for bindings
-  - Tests: `azure/test/`
+  The AWS Forwarder follows a **4-stage pipeline architecture**:
   
-  **Trace Forwarder (Go)**
-  - Entry: `aws/logs_monitoring/trace_forwarder/cmd/`
-  - Build: Uses Dockerfile and Makefile
-  - Special purpose for APM trace forwarding
+  ### 1. PARSE Stage (`steps/parsing.py`)
+  **What it does:** Identifies the event source and extracts raw log data
+  
+  - Determines event type (CloudWatch, S3, SNS, Kinesis, SQS, EventBridge)
+  - Routes to appropriate handler based on event structure
+  - Handlers extract actual log messages from AWS wrapper formats
+  - Example: CloudWatch events are gzip-compressed and base64-encoded, this stage unwraps them
+  
+  **Why it's needed:** Different AWS services wrap logs differently. This normalizes them into a consistent format.
+  
+  ### 2. ENRICH Stage (`steps/enrichment.py`)
+  **What it does:** Adds metadata and tags to make logs more useful
+  
+  - For Lambda logs: Adds function name, ARN, account ID, region as tags
+  - Extracts DD tags embedded in log messages (if developers add them)
+  - Identifies the "host" (often the Lambda ARN or EC2 instance ID)
+  - Extracts service name from tags or defaults to function name
+  - Pulls custom tags from the Lambda function itself (using cache)
+  
+  **Why it's needed:** Raw logs lack context. Tags enable filtering, grouping, and correlation in Datadog (e.g., "show me all errors from production Lambda functions in us-east-1").
+  
+  ### 3. TRANSFORM Stage (`steps/transformation.py`)
+  **What it does:** Restructures complex log formats for better queryability
+  
+  - Flattens nested JSON arrays (especially AWS WAF logs)
+  - Separates Security Hub findings into individual events
+  - Handles special cases where AWS puts arrays of objects in logs
+  
+  **Why it's needed:** Nested arrays are hard to query in Datadog. Flattening makes each finding/event searchable independently.
+  
+  ### 4. SPLIT Stage (`steps/splitting.py`)
+  **What it does:** Separates different telemetry types
+  
+  - **Metrics**: Identifies custom metrics from Lambda (format: {m, v, e, t})
+  - **Traces**: Identifies APM trace payloads (has "traces" array with trace_id)
+  - **Logs**: Everything else
+  
+  **Why it's needed:** Metrics, traces, and logs go to different Datadog endpoints and have different handling requirements.
+  
+  ### After the Pipeline: Forwarder (`forwarder.py`)
+  **What it does:** Actually sends data to Datadog
+  
+  - Batches logs (max 5MB per batch) for efficiency
+  - Compresses with gzip to reduce bandwidth
+  - Sends to appropriate Datadog API endpoints
+  - Implements retry logic with exponential backoff
+  - Stores failed events to S3 if configured (for replay)
+  
+  **Complete Data Flow Example:**
+  ```
+  CloudWatch Log Generated
+    ↓
+  Lambda receives gzip'd, base64-encoded event
+    ↓
+  PARSE: Unwrap, decompress, extract log lines
+    ↓
+  ENRICH: Add tags (functionname:my-api, env:prod, region:us-east-1)
+    ↓
+  TRANSFORM: Flatten any nested JSON structures
+    ↓
+  SPLIT: Identify as log (not metric/trace)
+    ↓
+  BATCH: Group with other logs (up to 5MB)
+    ↓
+  SEND: POST to Datadog logs API with gzip compression
+    ↓
+  Appears in Datadog Live Tail within seconds
+  ```
+  
+  **Key Supporting Modules:**
+  
+  - **`settings.py`**: Configuration from environment variables (DD_API_KEY, DD_SITE, DD_TAGS, etc.)
+  - **`caching/cache_layer.py`**: Caches Lambda tags to avoid repeated API calls
+  - **`logs/datadog_scrubber.py`**: Redacts sensitive data using regex patterns
+  - **`telemetry.py`**: Sends forwarder metrics to Datadog (so you can monitor the forwarder itself)
+  - **`enhanced_lambda_metrics.py`**: Parses and submits enhanced Lambda metrics
+  
+  **Entry Point Flow:**
+  ```python
+  # lambda_function.py - Main entry point
+  def datadog_forwarder(event, context):
+      parsed = parse(event, context, cache_layer)        # Stage 1
+      enriched = enrich(parsed, cache_layer)              # Stage 2
+      transformed = transform(enriched)                   # Stage 3
+      metrics, logs, trace_payloads = split(transformed) # Stage 4
+      forwarder.forward(logs, metrics, trace_payloads)   # Send to Datadog
+  ```
+  
+  **Azure Functions (Node.js) - Architecture**
+  
+  ### EventHub Logs Monitoring (`azure/activity_logs_monitoring/`)
+  **What it does:** Forwards Azure Activity and Diagnostic logs from EventHub to Datadog
+  
+  - Triggered by EventHub messages (Azure's streaming service)
+  - Receives batches of Azure Activity Logs (who did what in your Azure subscription)
+  - Receives Diagnostic Logs (resource-level operational logs)
+  - Parses Azure's JSON format
+  - Adds Azure-specific tags (subscription ID, resource group, resource type)
+  - Sends to Datadog logs API
+  
+  **Why EventHub:** Azure's recommended pattern for streaming logs from Azure Monitor
+  
+  **Data Flow:**
+  ```
+  Azure Resource (VM, App Service, etc.)
+    ↓
+  Azure Monitor (collects diagnostics)
+    ↓
+  EventHub (streams logs)
+    ↓
+  Azure Function (this code - triggered by EventHub)
+    ↓
+  Datadog Logs API
+    ↓
+  Datadog Platform
+  ```
+  
+  ### Blob Storage Logs Monitoring (`azure/blobs_logs_monitoring/`)
+  **What it does:** Forwards logs stored in Azure Blob Storage to Datadog
+  
+  - Triggered when new blobs (files) are created in storage
+  - Useful for logs that are batched and uploaded periodically
+  - Downloads blob content
+  - Parses and forwards to Datadog
+  
+  **Why Blob Storage:** Some Azure services write logs to storage instead of streaming them
+  
+  ### EventHub Log Forwarder Pipeline (`azure/eventhub_log_forwarder/`)
+  **What it does:** PowerShell scripts to automate the Azure log forwarding setup
+  
+  - Creates EventHub namespaces and hubs
+  - Configures Azure Monitor to send logs to EventHub
+  - Sets up diagnostic settings for resources
+  - Automates the infrastructure setup
+  
+  **Why PowerShell:** Azure's native automation language for infrastructure
+  
+  **Trace Forwarder (Go) - Special Purpose**
+  
+  Location: `aws/logs_monitoring/trace_forwarder/`
+  
+  **What it does:** Specialized forwarder for APM (Application Performance Monitoring) traces
+  
+  - Written in Go for high performance (trace data can be very high volume)
+  - Handles X-Ray traces from AWS
+  - Processes trace payloads from instrumented applications
+  - Optimized for throughput and low latency
+  
+  **Why separate from Python forwarder:** Traces have different performance requirements and benefit from Go's concurrency model
+  
+  ## Key Concepts Explained
+  
+  ### Log Forwarding vs Metric Forwarding vs Trace Forwarding
+  
+  **Logs**: Text-based events with timestamps (e.g., "User logged in", "Error connecting to database")
+  - Format: Unstructured or structured JSON
+  - Volume: Medium to high
+  - Use: Debugging, audit trails, event correlation
+  
+  **Metrics**: Numeric measurements (e.g., CPU usage: 45%, request count: 1523)
+  - Format: {metric name, value, timestamp, tags}
+  - Volume: Lower than logs (aggregated)
+  - Use: Performance monitoring, alerting on thresholds
+  
+  **Traces**: Distributed request flows (e.g., "Request went through API → Database → Cache, took 150ms total")
+  - Format: Nested spans with parent-child relationships
+  - Volume: Can be very high in microservices
+  - Use: Performance optimization, finding bottlenecks
+  
+  ### Why Batching Matters
+  
+  - **Problem**: Sending each log individually = many HTTP requests = slow + expensive
+  - **Solution**: Group up to 1000 logs or 5MB per request
+  - **Benefit**: 1 request instead of 1000 = 1000x fewer network calls
+  - **Trade-off**: Small delay (buffering) for huge efficiency gain
+  
+  ### Why Scrubbing Is Critical
+  
+  - **Problem**: Logs can accidentally contain credit cards, SSNs, API keys
+  - **Solution**: Regex patterns detect and redact sensitive data
+  - **Compliance**: Helps meet PCI-DSS, HIPAA, GDPR requirements
+  - **Configurable**: Can add custom patterns via DD_CUSTOM_SCRUBBING_RULE
+  
+  ### Why Caching Layer Exists
+  
+  - **Problem**: Getting Lambda tags requires API call to AWS Lambda service
+  - **Without cache**: Every log line → API call → very slow + expensive + rate limits
+  - **With cache**: First log → API call → cache for 5 mins (configurable TTL)
+  - **Result**: Subsequent logs use cached tags = fast + cheap
+  
+  Tests: `aws/logs_monitoring/tests/`
   
   ## Documentation References
   
@@ -513,159 +715,399 @@ examples:
   
   - prompt: "Explain how the AWS logs monitoring code works"
     response: |
-      Let me explain the architecture and flow of the AWS logs monitoring (Datadog Forwarder) codebase.
+      Let me explain in detail what the AWS logs monitoring (Datadog Forwarder) codebase does and how it works.
       
-      ## Architecture Overview
+      ## What This Code Actually Does
       
-      The Datadog Forwarder is a Lambda function that processes various AWS log sources and forwards them to Datadog. Here's how the code is structured:
+      The Datadog Forwarder is an **intelligent data pipeline** that sits between your AWS infrastructure and Datadog. Think of it as a sophisticated mail sorting facility:
       
-      ### Entry Point: lambda_function.py
+      - **Receives**: Log data from various AWS sources in different formats
+      - **Processes**: Unwraps, enriches, and transforms the data
+      - **Delivers**: Sends organized, tagged data to Datadog for monitoring
       
-      Location: `aws/logs_monitoring/lambda_function.py`
+      **Real-World Example:**
+      When your Lambda function logs "User 123 logged in", this code:
+      1. Receives the log from CloudWatch
+      2. Unwraps it from AWS's gzip/base64 encoding
+      3. Adds context: "This came from my-api-function in production, us-east-1"
+      4. Groups it with other recent logs into a batch
+      5. Sends it to Datadog where you can search, alert, and analyze it
       
-      This is the main handler that Lambda invokes. It:
-      1. Receives events from various AWS sources (CloudWatch, S3, SNS, Kinesis)
-      2. Detects the event type
-      3. Routes to appropriate handlers
-      4. Returns success/failure response
+      ## The 4-Stage Pipeline Architecture
       
-      Key function:
+      Location: `aws/logs_monitoring/lambda_function.py` (main entry point)
+      
       ```python
-      def lambda_handler(event, context):
-          # Determines event source and routes accordingly
-          if is_cloudwatch_event(event):
-              return handle_cloudwatch_logs(event)
-          elif is_s3_event(event):
-              return handle_s3_event(event)
-          # etc.
+      def datadog_forwarder(event, context):
+          # Stage 1: Parse - Extract logs from AWS format
+          parsed = parse(event, context, cache_layer)
+          
+          # Stage 2: Enrich - Add metadata and tags
+          enriched = enrich(parsed, cache_layer)
+          
+          # Stage 3: Transform - Flatten complex structures
+          transformed = transform(enriched)
+          
+          # Stage 4: Split - Separate logs/metrics/traces
+          metrics, logs, trace_payloads = split(transformed)
+          
+          # Finally: Send to Datadog
+          forwarder.forward(logs, metrics, trace_payloads)
       ```
       
-      ### Core Modules
+      Let me explain each stage in detail:
       
-      #### 1. datadog_client.py (`logs/datadog_client.py`)
+      ### Stage 1: PARSE (`steps/parsing.py`)
       
-      Handles HTTP communication with Datadog:
-      - Manages API endpoint URLs based on DD_SITE
-      - Constructs HTTP requests with proper headers
-      - Implements retry logic for failures
-      - Handles compression (gzip) for large payloads
+      **What it does:** Identifies where the log came from and extracts the actual log data
       
-      #### 2. datadog_batcher.py (`logs/datadog_batcher.py`)
+      **The Challenge:** AWS services send logs in different wrapper formats:
+      - CloudWatch: gzip-compressed, base64-encoded JSON
+      - S3: Files in various formats (CloudTrail, VPC Flow, ALB logs)
+      - SNS: JSON messages that might contain nested S3 events
+      - Kinesis: Streaming records with embedded CloudWatch data
       
-      Optimizes log transmission:
-      - Groups logs into batches (max 5 MB per batch)
-      - Reduces API calls for efficiency
-      - Handles batch size limits
-      - Preserves log ordering within batches
-      
-      #### 3. datadog_scrubber.py (`logs/datadog_scrubber.py`)
-      
-      Security and compliance:
-      - Redacts sensitive data (credit cards, SSNs, etc.)
-      - Uses regex patterns for detection
-      - Configurable scrubbing rules
-      - Prevents accidental leakage of secrets
-      
-      #### 4. helpers.py (`logs/helpers.py`)
-      
-      Utility functions for:
-      - Parsing CloudWatch log format
-      - Extracting metadata from events
-      - Tag generation and enrichment
-      - Log transformation and normalization
-      
-      ### Processing Flow
-      
-      ```
-      1. Lambda receives event
-         ↓
-      2. lambda_handler() identifies source type
-         ↓
-      3. Source-specific handler extracts logs
-         ↓
-      4. helpers.py parses and transforms logs
-         ↓
-      5. datadog_scrubber.py removes sensitive data
-         ↓
-      6. datadog_batcher.py groups into optimal batches
-         ↓
-      7. datadog_client.py sends to Datadog API
-         ↓
-      8. Response returned to Lambda
+      **How it works:**
+      ```python
+      def parse(event, context, cache_layer):
+          # First, figure out what type of event this is
+          event_type = parse_event_type(event)
+          
+          # Route to the right handler
+          match event_type:
+              case AwsEventType.AWSLOGS:
+                  # CloudWatch logs handler
+                  aws_handler = AwsLogsHandler(context, cache_layer)
+                  events = aws_handler.handle(event)
+              case AwsEventType.S3:
+                  # S3 logs handler  
+                  s3_handler = S3EventHandler(context, metadata, cache_layer)
+                  events = s3_handler.handle(event)
+              # ... other handlers
       ```
       
-      ### Event Type Handlers
+      **Real Example - CloudWatch Log:**
+      ```
+      Input: {awslogs: {data: "H4sIAA...base64..."}}  ← Compressed, encoded
+      Handler: Decodes base64 → Decompresses gzip → Parses JSON
+      Output: [{message: "User 123 logged in", timestamp: 1234567890}]
+      ```
       
-      **CloudWatch Logs:**
-      - Decompresses gzip'd log data
-      - Parses JSON log format
-      - Extracts log group and stream metadata
-      - Adds AWS-specific tags
+      **Real Example - S3 CloudTrail Log:**
+      ```
+      Input: {Records: [{s3: {bucket: "logs", key: "cloudtrail/2024/..."}}]}
+      Handler: Downloads file from S3 → Detects CloudTrail format → Parses events
+      Output: [{eventName: "AssumeRole", userIdentity: {...}, ...}]
+      ```
       
-      **S3 Logs:**
-      - Downloads log files from S3
-      - Detects file format (CloudTrail, VPC Flow, ALB, etc.)
-      - Parses format-specific structure
-      - Handles large files with streaming
+      ### Stage 2: ENRICH (`steps/enrichment.py`)
       
-      **SNS/Kinesis:**
-      - Unwraps message envelope
-      - Extracts nested CloudWatch logs
-      - Processes each record independently
+      **What it does:** Adds critical metadata that makes logs useful for filtering and correlation
       
-      ### Key Features
+      **The Challenge:** Raw logs lack context like "which Lambda function?" or "what environment?"
       
-      **Tagging:**
-      - Automatic AWS tags: region, account_id, function_name
-      - Custom tags from DD_TAGS environment variable
-      - Source-specific tags (log group, S3 bucket, etc.)
+      **How it works:**
+      ```python
+      def enrich(events, cache_layer):
+          for event in events:
+              # For Lambda logs, add function metadata
+              add_metadata_to_lambda_log(event, cache_layer)
+              
+              # Extract tags from the log message itself
+              extract_ddtags_from_message(event)
+              
+              # For CloudTrail, identify the EC2 host
+              extract_host_from_cloudtrails(event)
+      ```
       
-      **Error Handling:**
-      - Retries with exponential backoff
-      - Partial failure support (continues on individual log errors)
-      - Error logging to CloudWatch
-      - Optional failed event storage (DD_STORE_FAILED_EVENTS)
+      **Real Example - Lambda Log Enrichment:**
+      ```
+      Input event:
+      {
+          "message": "User 123 logged in",
+          "lambda": {"arn": "arn:aws:lambda:us-east-1:123456:function:my-api"}
+      }
       
-      **Performance Optimizations:**
-      - Parallel processing of S3 objects
-      - In-memory batching
-      - Gzip compression
-      - Connection pooling
+      Enrichment process:
+      1. Extract function name from ARN: "my-api"
+      2. Set host to Lambda ARN
+      3. Add tags: ["functionname:my-api"]
+      4. Fetch custom tags from Lambda (cached): ["env:prod", "team:backend"]
+      5. Set service: "my-api" (or from custom tags if exists)
       
-      ### Testing Structure
+      Output event:
+      {
+          "message": "User 123 logged in",
+          "host": "arn:aws:lambda:us-east-1:123456:function:my-api",
+          "service": "my-api",
+          "ddtags": "functionname:my-api,env:prod,team:backend"
+      }
+      ```
+      
+      **Why This Matters:**
+      Now in Datadog you can filter: `service:my-api env:prod` to see only production logs from this function.
+      
+      ### Stage 3: TRANSFORM (`steps/transformation.py`)
+      
+      **What it does:** Restructures complex log formats so they're queryable in Datadog
+      
+      **The Challenge:** Some AWS logs have nested arrays of objects, which Datadog can't easily search
+      
+      **How it works:**
+      ```python
+      def transform(events):
+          # Handle AWS WAF logs (nested array of rules)
+          for index, event in enumerate(events):
+              waf = parse_aws_waf_logs(event)
+              if waf != event:
+                  events[index] = waf
+          
+          # Separate Security Hub findings into individual events
+          for event in reversed(events):
+              findings = separate_security_hub_findings(event)
+              if findings:
+                  events.remove(event)
+                  events.extend(findings)  # One finding = one event
+      ```
+      
+      **Real Example - Security Hub:**
+      ```
+      Input: One event with array of 5 security findings
+      {
+          "detail": {
+              "findings": [
+                  {"title": "S3 bucket public", "severity": "HIGH"},
+                  {"title": "Unused IAM role", "severity": "LOW"},
+                  {"title": "SSH port open", "severity": "CRITICAL"},
+                  ...
+              ]
+          }
+      }
+      
+      Transform: Split into 5 separate events
+      [{detail: {finding: {title: "S3 bucket public", ...}}},
+       {detail: {finding: {title: "Unused IAM role", ...}}},
+       {detail: {finding: {title: "SSH port open", ...}}},
+       ...]
+      
+      Why: Now you can search "severity:CRITICAL" and get only critical findings
+      ```
+      
+      ### Stage 4: SPLIT (`steps/splitting.py`)
+      
+      **What it does:** Separates metrics, traces, and logs into different buckets
+      
+      **The Challenge:** Datadog has different APIs for logs, metrics, and traces
+      
+      **How it works:**
+      ```python
+      def split(events):
+          metrics, logs, trace_payloads = [], [], []
+          
+          for event in events:
+              # Check if it's a custom metric
+              metric = extract_metric(event)
+              
+              # Check if it's a trace payload
+              trace_payload = extract_trace_payload(event)
+              
+              if metric:
+                  metrics.append(metric)
+              elif trace_payload:
+                  trace_payloads.append(trace_payload)
+              else:
+                  logs.append(event)  # Everything else is a log
+      ```
+      
+      **Real Examples:**
+      
+      **Metric Detection:**
+      ```python
+      # If log message looks like: {"m": "request.count", "v": 42, "e": 1234567890, "t": ["env:prod"]}
+      # It's a custom metric, not a log
+      
+      Input: {message: '{"m": "request.count", "v": 42, "e": 1234567890, "t": ["env:prod"]}'}
+      Check: Has required fields (m=name, v=value, e=timestamp, t=tags)?
+      Result: Extract as METRIC, send to metrics API
+      ```
+      
+      **Trace Detection:**
+      ```python
+      # If log message has "traces" array with trace_id, it's APM data
+      
+      Input: {message: '{"traces": [[{"trace_id": 123, "span_id": 456, ...}]]}'}
+      Check: Has "traces" array? Has trace_id in spans?
+      Result: Extract as TRACE, send to traces API
+      ```
+      
+      **Everything Else:**
+      ```python
+      Input: {message: "User 123 logged in"}
+      Check: Not a metric format, not a trace format
+      Result: Keep as LOG, send to logs API
+      ```
+      
+      ### Stage 5: FORWARD (`forwarder.py`)
+      
+      **What it does:** Actually sends the data to Datadog efficiently
+      
+      **Key Features:**
+      
+      1. **Batching:**
+         ```python
+         # Instead of 1000 HTTP requests for 1000 logs:
+         # Group into batches (max 5MB or 1000 logs each)
+         # Send maybe 2-3 requests instead
+         
+         batch_1 = logs[0:1000]   # First 1000 logs
+         batch_2 = logs[1000:2000] # Next 1000 logs
+         send_to_datadog(batch_1)
+         send_to_datadog(batch_2)
+         ```
+      
+      2. **Compression:**
+         ```python
+         # Compress with gzip before sending
+         # 100 KB of logs → 10 KB compressed
+         # Saves bandwidth and money
+         ```
+      
+      3. **Retry Logic:**
+         ```python
+         # If send fails, retry with exponential backoff
+         try:
+             send_to_datadog(logs)
+         except NetworkError:
+             wait(1 second)
+             retry()  # If fails again, wait 2s, then 4s, then 8s...
+         ```
+      
+      4. **Failed Event Storage:**
+         ```python
+         # If DD_STORE_FAILED_EVENTS is enabled:
+         # Save failed logs to S3 for later replay
+         # Prevents data loss during outages
+         ```
+      
+      ## Supporting Components
+      
+      ### Scrubber (`logs/datadog_scrubber.py`)
+      **What it does:** Redacts sensitive data from logs
+      
+      ```python
+      Input: "Customer card 4532-1234-5678-9010 was charged"
+      Scrubber: Detects credit card pattern
+      Output: "Customer card ***REDACTED*** was charged"
+      ```
+      
+      ### Cache Layer (`caching/cache_layer.py`)
+      **What it does:** Caches Lambda tags to avoid repeated API calls
+      
+      ```python
+      First log from my-api:
+      1. Call AWS Lambda API to get tags (slow, 50ms)
+      2. Cache result for 5 minutes
+      
+      Next 1000 logs from my-api:
+      1. Use cached tags (fast, <1ms)
+      2. Saved 1000 API calls!
+      ```
+      
+      ### Settings (`settings.py`)
+      **What it does:** Loads configuration from environment variables
+      
+      ```python
+      DD_API_KEY = os.environ.get("DD_API_KEY")  # Your Datadog API key
+      DD_SITE = os.environ.get("DD_SITE", "datadoghq.com")  # Datadog site
+      DD_TAGS = os.environ.get("DD_TAGS", "")  # Custom tags
+      DD_SOURCE = os.environ.get("DD_SOURCE")  # Override source
+      # ... many more configuration options
+      ```
+      
+      ## Complete Example: CloudWatch Log Journey
+      
+      ```
+      1. Your Lambda logs: logger.info("Payment processed: $50")
+      
+      2. CloudWatch receives it, wraps it:
+         {awslogs: {data: "H4sIAA...compressed+encoded..."}}
+      
+      3. CloudWatch triggers Datadog Forwarder Lambda
+      
+      4. PARSE stage:
+         - Detects: CloudWatch event
+         - Decodes base64 → Decompresses gzip
+         - Extracts: {message: "Payment processed: $50", timestamp: 1234567890}
+      
+      5. ENRICH stage:
+         - Adds function ARN as host
+         - Adds tags: functionname:payment-service, env:prod, team:payments
+         - Sets service: payment-service
+      
+      6. TRANSFORM stage:
+         - No complex structures to flatten
+         - Passes through unchanged
+      
+      7. SPLIT stage:
+         - Not a metric (no {m, v, e, t} format)
+         - Not a trace (no "traces" array)
+         - Classified as: LOG
+      
+      8. FORWARD stage:
+         - Groups with 999 other recent logs
+         - Compresses batch with gzip
+         - Sends to: https://http-intake.logs.datadoghq.com/v1/input
+         - Receives: 200 OK
+      
+      9. Appears in Datadog Live Tail within 2 seconds!
+      
+      10. You can now search in Datadog:
+          - service:payment-service env:prod "Payment processed"
+          - Set up alert: if count > 1000 in 5 mins, page on-call
+      ```
+      
+      ## Testing Structure
       
       Located in `aws/logs_monitoring/tests/`:
       
-      - `test_lambda_function.py` - Handler routing tests
-      - `test_logs.py` - Core logging functionality
-      - `test_parsing.py` - Log format parsing
-      - `test_transformation.py` - Data transformation
-      - `test_awslogs_handler.py` - CloudWatch specific
-      - `test_s3_handler.py` - S3 specific
-      - `test_caching.py` - Metadata caching
+      - `test_lambda_function.py` - Tests the main entry point and routing
+      - `test_parsing.py` - Tests event type detection and parsing logic
+      - `test_awslogs_handler.py` - Tests CloudWatch log handling
+      - `test_s3_handler.py` - Tests S3 log file processing
+      - `test_transformation.py` - Tests log transformation logic
+      - `test_splitting.py` - Tests metric/trace/log separation
+      - `test_caching.py` - Tests the tag caching layer
+      - `test_logs.py` - Tests core logging functionality
       
-      ### Configuration via Environment Variables
+      ## Environment Variables (Configuration)
       
-      - `DD_API_KEY` - Datadog API key (or from Secrets Manager)
-      - `DD_SITE` - Datadog site (datadoghq.com, etc.)
-      - `DD_TAGS` - Custom tags to add
-      - `DD_MULTILINE_LOG_REGEX_PATTERN` - Pattern for multiline logs
-      - `DD_SOURCE` - Override log source
-      - `DD_CUSTOM_SCRUBBING_RULE` - Additional scrubbing patterns
-      - `DD_STORE_FAILED_EVENTS` - Store failed events in S3
+      Key configuration options from `settings.py`:
       
-      ### Special Features
+      ```bash
+      # Required
+      DD_API_KEY="your_key_here"           # Datadog API key
+      DD_SITE="datadoghq.com"              # Your Datadog site
       
-      **Trace Forwarder:**
-      The `trace_forwarder/` subdirectory is a Go-based implementation for forwarding APM traces. It's a separate component with its own build process (Makefile, Dockerfile).
+      # Optional but recommended  
+      DD_TAGS="env:prod,team:platform"     # Custom tags on all logs
+      DD_SOURCE="custom-source"            # Override log source
+      DD_SERVICE="my-service"              # Override service name
       
-      **Caching:**
-      Implements tag caching with configurable TTL (TAGS_CACHE_TTL_SECONDS) to reduce API calls for metadata.
+      # Security
+      DD_SCRUBBING_RULE="REDACT:pattern"   # Custom scrubbing patterns
+      DD_STORE_FAILED_EVENTS="true"        # Save failed events to S3
       
-      **Lambda Extension Support:**
-      While the Forwarder can forward Lambda metrics/traces, Datadog now recommends the Lambda Extension for direct telemetry collection.
+      # Performance
+      TAGS_CACHE_TTL_SECONDS="300"         # How long to cache tags
+      DD_MULTILINE_LOG_REGEX_PATTERN="..."  # Pattern for multiline logs
       
-      Would you like me to dive deeper into any specific component or explain how to modify the code for custom use cases?
+      # Advanced
+      DD_USE_TCP="true"                    # Use TCP instead of HTTP
+      DD_NO_SSL="false"                    # Disable SSL (not recommended)
+      DD_ADDITIONAL_TARGET_LAMBDAS="..."   # Fan-out to other Lambdas
+      ```
+      
+      Would you like me to explain any specific component in more detail, or show you how to customize the code for your use case?
   
   - prompt: "I'm getting throttling errors on my forwarder"
     response: |
