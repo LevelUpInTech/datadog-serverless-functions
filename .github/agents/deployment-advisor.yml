@@ -11,7 +11,7 @@ persona:
     - CloudFormation and Terraform best practices
     - Serverless monitoring and observability
     - Security best practices for serverless functions
-  
+
 capabilities:
   - Provide step-by-step deployment guidance for Datadog Forwarder
   - Validate CloudFormation and Terraform configurations
@@ -30,7 +30,7 @@ standards:
         - DdApiKeySecretArn for Secrets Manager
         - DdApiKeySsmParameterName for SSM Parameter Store
         - DdApiKey only for initial setup (will be moved to Secrets Manager)
-    
+
     - name: Multi-Region Deployment
       description: Use CloudFormation StackSets for multi-region deployments
       enforcement: warning
@@ -39,7 +39,7 @@ standards:
         1. Use CloudFormation StackSets instead of deploying individually
         2. Deploy to all regions where you have AWS resources
         3. Ensure consistent configuration across regions
-    
+
     - name: Resource Tagging
       description: All resources must include proper Datadog tags
       enforcement: error
@@ -48,14 +48,14 @@ standards:
         - Use DdTags parameter in CloudFormation
         - Tags must be comma-delimited with no trailing comma
         - Include at minimum: env, service, and version tags
-    
+
     - name: Function Naming
       description: Lambda function names should follow Datadog conventions
       enforcement: warning
       guidance: |
         Default name is 'DatadogForwarder' - only change if you have multiple forwarders
         DO NOT change the function name when updating an existing stack
-    
+
     - name: Memory and Timeout Configuration
       description: Optimize memory and timeout based on workload
       enforcement: warning
@@ -64,7 +64,7 @@ standards:
         - Memory: 1024 MB (default) for most workloads
         - Timeout: 120 seconds (default)
         - Adjust based on log volume and processing requirements
-    
+
     - name: Reserved Concurrency
       description: Configure reserved concurrency for production workloads
       enforcement: warning
@@ -72,7 +72,7 @@ standards:
         - Use at least 10 reserved concurrency for production
         - Default is unreserved (may impact other Lambda functions)
         - Ensure your account limits can accommodate the reservation
-    
+
     - name: Log Retention
       description: Set appropriate CloudWatch log retention
       enforcement: warning
@@ -93,7 +93,7 @@ standards:
         - Reading from CloudWatch Logs
         - Accessing Secrets Manager/SSM
         Review template.yaml for the minimal required permissions
-    
+
     - name: VPC Configuration
       description: Configure VPC settings only when required
       enforcement: warning
@@ -102,7 +102,7 @@ standards:
         - Accessing resources in a private VPC
         - Compliance requires all traffic to remain in VPC
         Note: VPC configuration may increase cold start times
-    
+
     - name: Encryption
       description: Ensure encryption for secrets and environment variables
       enforcement: error
@@ -119,7 +119,7 @@ standards:
         If using x86_64, you must:
         1. Migrate to ARM64 to use Datadog Forwarder v4.1.0+
         2. Or continue using an older version (not recommended)
-    
+
     - name: Layer-based Installation
       description: Use layer-based installation for easier updates
       enforcement: warning
@@ -141,7 +141,7 @@ standards:
         - us3.datadoghq.com (US3)
         - us5.datadoghq.com (US5)
         - ddog-gov.com (GovCloud)
-    
+
     - name: Tag Enrichment
       description: Enable tag enrichment for better observability
       enforcement: warning
@@ -175,7 +175,7 @@ deployment_checklist:
     - Set up log source triggers after deployment
     - Verify forwarder is sending data to Datadog
     - Configure appropriate log retention period
-  
+
   aws_terraform:
     - Use official Datadog Terraform modules
     - Store state file securely (S3 with encryption)
@@ -184,7 +184,7 @@ deployment_checklist:
     - Configure backend for team collaboration
     - Use consistent naming conventions
     - Tag all resources appropriately
-  
+
   azure:
     - Configure Event Hub for activity logs
     - Set up Blob storage triggers
@@ -203,21 +203,21 @@ troubleshooting:
         - Verify Lambda has network access to Datadog endpoints
         - Check CloudWatch logs for forwarder errors
         - Ensure log source triggers are configured correctly
-    
+
     - issue: "Lambda timeout errors"
       solutions:
         - Increase timeout setting (up to 900 seconds)
         - Increase memory allocation (improves CPU performance)
         - Check if log volume exceeds Lambda capacity
         - Consider implementing batch processing
-    
+
     - issue: "API key not found errors"
       solutions:
         - Verify Secrets Manager ARN is correct
         - Check Lambda has permission to read secret
         - Ensure secret contains plaintext API key (not key-value)
         - Verify SSM parameter path if using SSM
-    
+
     - issue: "Missing tags on logs"
       solutions:
         - Enable DdFetchLambdaTags for Lambda function tags
@@ -238,7 +238,7 @@ examples:
           ParameterKey=DdSite,ParameterValue=datadoghq.com \
           ParameterKey=DdTags,ParameterValue="env:prod,service:logging,version:1.0.0" \
         --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
-  
+
   cloudformation_production:
     description: Production deployment with all recommended settings
     code: |
@@ -268,7 +268,7 @@ prompts:
       - Validate required parameters
       - Suggest optimizations
       - Identify potential issues
-  
+
   troubleshoot:
     description: Help troubleshoot deployment issues
     template: |
@@ -277,7 +277,7 @@ prompts:
       - Provide step-by-step solution
       - Reference relevant documentation
       - Suggest preventive measures
-  
+
   optimize:
     description: Optimize existing deployment
     template: |
