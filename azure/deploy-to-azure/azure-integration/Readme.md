@@ -167,9 +167,10 @@ helm repo add datadog https://helm.datadoghq.com
 helm repo update
 ```
 
-2. Create a Kubernetes secret for the API key:
+2. Create the Datadog namespace and a secret for the API key:
 
 ```bash
+# Create namespace (idempotent - won't fail if namespace already exists)
 kubectl create namespace datadog --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic datadog-secret \
   --from-literal api-key=<your-datadog-api-key> \
