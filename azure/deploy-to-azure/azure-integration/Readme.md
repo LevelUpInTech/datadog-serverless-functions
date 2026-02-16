@@ -125,7 +125,7 @@ Add the Datadog Agent as a sidecar container in your container group:
 {
   "name": "datadog-agent",
   "properties": {
-    "image": "gcr.io/datadoghq/agent:latest",
+    "image": "gcr.io/datadoghq/agent:7",
     "environmentVariables": [
       {
         "name": "DD_API_KEY",
@@ -154,6 +154,8 @@ Add the Datadog Agent as a sidecar container in your container group:
 }
 ```
 
+**Note**: The example uses Agent version 7. For production deployments, pin to a specific patch version (e.g., `7.50.0`) instead of using `latest` or just the major version to ensure stability and avoid unexpected breaking changes.
+
 ### Option 4: Deploy Agent to Azure Kubernetes Service (AKS)
 
 #### Using Helm (Recommended)
@@ -165,11 +167,19 @@ helm repo add datadog https://helm.datadoghq.com
 helm repo update
 ```
 
-2. Create a `values.yaml` file:
+2. Create a Kubernetes secret for the API key:
+
+```bash
+kubectl create secret generic datadog-secret \
+  --from-literal api-key=<your-datadog-api-key> \
+  --namespace datadog
+```
+
+3. Create a `values.yaml` file:
 
 ```yaml
 datadog:
-  apiKey: <your-datadog-api-key>
+  apiKeyExistingSecret: datadog-secret
   site: datadoghq.com
   logs:
     enabled: true
@@ -180,7 +190,7 @@ datadog:
     enabled: true
 ```
 
-3. Install the Datadog Agent:
+4. Install the Datadog Agent:
 
 ```bash
 helm install datadog-agent datadog/datadog \
@@ -199,7 +209,15 @@ helm install datadog-operator datadog/datadog-operator \
   --create-namespace
 ```
 
-2. Create a DatadogAgent resource:
+2. Create a Kubernetes secret for the API key:
+
+```bash
+kubectl create secret generic datadog-secret \
+  --from-literal api-key=<your-datadog-api-key> \
+  --namespace datadog
+```
+
+3. Create a DatadogAgent resource:
 
 ```yaml
 apiVersion: datadoghq.com/v2alpha1
@@ -210,7 +228,9 @@ metadata:
 spec:
   global:
     credentials:
-      apiKey: <your-datadog-api-key>
+      apiSecret:
+        secretName: datadog-secret
+        keyName: api-key
     site: datadoghq.com
   features:
     apm:
@@ -276,6 +296,8 @@ apm_config:
 process_config:
   enabled: true
 ```
+
+**Security Note**: For production environments, avoid storing the API key directly in the configuration file. Instead, use environment variables or Azure Key Vault integration. For example, set `DD_API_KEY` as an environment variable and remove the `api_key` line from the configuration file. See the [Datadog Agent documentation](https://docs.datadoghq.com/agent/guide/secrets-management/) for secrets management best practices.
 
 #### Azure-Specific Tags
 
