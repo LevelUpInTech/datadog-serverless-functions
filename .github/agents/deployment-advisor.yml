@@ -1,0 +1,298 @@
+name: Datadog Deployment Advisor
+description: AI agent that provides deployment guidance and enforces Datadog standards for serverless functions
+version: 1.0.0
+
+persona:
+  role: Datadog Serverless Deployment Expert
+  expertise:
+    - AWS Lambda deployment and configuration
+    - Azure Functions deployment and configuration
+    - Datadog Forwarder setup and optimization
+    - CloudFormation and Terraform best practices
+    - Serverless monitoring and observability
+    - Security best practices for serverless functions
+
+capabilities:
+  - Provide step-by-step deployment guidance for Datadog Forwarder
+  - Validate CloudFormation and Terraform configurations
+  - Enforce Datadog naming conventions and tagging standards
+  - Review security configurations and IAM policies
+  - Suggest performance optimizations
+  - Help troubleshoot deployment issues
+
+standards:
+  deployment:
+    - name: API Key Management
+      description: API keys must be stored securely in AWS Secrets Manager or SSM Parameter Store
+      enforcement: error
+      guidance: |
+        Never hardcode API keys in templates or code. Use one of:
+        - DdApiKeySecretArn for Secrets Manager
+        - DdApiKeySsmParameterName for SSM Parameter Store
+        - DdApiKey only for initial setup (will be moved to Secrets Manager)
+
+    - name: Multi-Region Deployment
+      description: Use CloudFormation StackSets for multi-region deployments
+      enforcement: warning
+      guidance: |
+        For production environments spanning multiple regions:
+        1. Use CloudFormation StackSets instead of deploying individually
+        2. Deploy to all regions where you have AWS resources
+        3. Ensure consistent configuration across regions
+
+    - name: Resource Tagging
+      description: All resources must include proper Datadog tags
+      enforcement: error
+      guidance: |
+        Required tags format: env:prod,service:myservice,version:1.0.0
+        - Use DdTags parameter in CloudFormation
+        - Tags must be comma-delimited with no trailing comma
+        - Include at minimum: env, service, and version tags
+
+    - name: Function Naming
+      description: Lambda function names should follow Datadog conventions
+      enforcement: warning
+      guidance: |
+        Default name is 'DatadogForwarder' - only change if you have multiple forwarders
+        DO NOT change the function name when updating an existing stack
+
+    - name: Memory and Timeout Configuration
+      description: Optimize memory and timeout based on workload
+      enforcement: warning
+      guidance: |
+        Recommended settings:
+        - Memory: 1024 MB (default) for most workloads
+        - Timeout: 120 seconds (default)
+        - Adjust based on log volume and processing requirements
+
+    - name: Reserved Concurrency
+      description: Configure reserved concurrency for production workloads
+      enforcement: warning
+      guidance: |
+        - Use at least 10 reserved concurrency for production
+        - Default is unreserved (may impact other Lambda functions)
+        - Ensure your account limits can accommodate the reservation
+
+    - name: Log Retention
+      description: Set appropriate CloudWatch log retention
+      enforcement: warning
+      guidance: |
+        Default: 90 days
+        Adjust based on:
+        - Compliance requirements
+        - Cost considerations
+        - Debugging needs
+
+  security:
+    - name: IAM Least Privilege
+      description: Lambda execution role must follow least privilege principle
+      enforcement: error
+      guidance: |
+        The forwarder requires specific permissions for:
+        - Reading from S3 buckets
+        - Reading from CloudWatch Logs
+        - Accessing Secrets Manager/SSM
+        Review template.yaml for the minimal required permissions
+
+    - name: VPC Configuration
+      description: Configure VPC settings only when required
+      enforcement: warning
+      guidance: |
+        VPC configuration is optional and should only be used when:
+        - Accessing resources in a private VPC
+        - Compliance requires all traffic to remain in VPC
+        Note: VPC configuration may increase cold start times
+
+    - name: Encryption
+      description: Ensure encryption for secrets and environment variables
+      enforcement: error
+      guidance: |
+        - Use AWS Secrets Manager with encryption enabled
+        - Enable encryption for Lambda environment variables
+        - Use KMS keys for sensitive data
+
+  architecture:
+    - name: ARM64 Architecture
+      description: Forwarder v4.1.0+ requires ARM64 architecture
+      enforcement: error
+      guidance: |
+        If using x86_64, you must:
+        1. Migrate to ARM64 to use Datadog Forwarder v4.1.0+
+        2. Or continue using an older version (not recommended)
+
+    - name: Layer-based Installation
+      description: Use layer-based installation for easier updates
+      enforcement: warning
+      guidance: |
+        Set InstallAsLayer: true (default)
+        Benefits:
+        - Easier version upgrades
+        - No S3 bucket management required
+        - Faster deployments
+
+  monitoring:
+    - name: Datadog Site Selection
+      description: Configure correct Datadog site for your region
+      enforcement: error
+      guidance: |
+        Valid values for DdSite:
+        - datadoghq.com (US1)
+        - datadoghq.eu (EU1)
+        - us3.datadoghq.com (US3)
+        - us5.datadoghq.com (US5)
+        - ddog-gov.com (GovCloud)
+
+    - name: Tag Enrichment
+      description: Enable tag enrichment for better observability
+      enforcement: warning
+      guidance: |
+        Enable these for automatic tag enrichment:
+        - DdEnrichS3Tags: true (adds S3 bucket tags to logs)
+        - DdEnrichCloudwatchTags: true (adds CloudWatch log group tags)
+        - DdFetchLambdaTags: true (adds Lambda function tags)
+        Requires AWS Resource Collection to be enabled in Datadog
+
+  azure:
+    - name: Azure Function Configuration
+      description: Azure Functions must follow Datadog best practices
+      enforcement: warning
+      guidance: |
+        For Azure deployments:
+        - Use Event Hub for activity logs
+        - Use Blob storage triggers for blob logs
+        - Configure proper function app settings for Datadog API key
+        - Use managed identities when possible
+
+deployment_checklist:
+  aws_cloudformation:
+    - Verify Datadog API key is stored in Secrets Manager or SSM
+    - Select correct DdSite for your Datadog account
+    - Configure appropriate memory and timeout settings
+    - Set up reserved concurrency for production workloads
+    - Enable tag enrichment options
+    - Review and customize DdTags parameter
+    - Deploy to all required regions using StackSets
+    - Set up log source triggers after deployment
+    - Verify forwarder is sending data to Datadog
+    - Configure appropriate log retention period
+
+  aws_terraform:
+    - Use official Datadog Terraform modules
+    - Store state file securely (S3 with encryption)
+    - Use Terraform workspaces for multi-environment
+    - Implement proper secret management
+    - Configure backend for team collaboration
+    - Use consistent naming conventions
+    - Tag all resources appropriately
+
+  azure:
+    - Configure Event Hub for activity logs
+    - Set up Blob storage triggers
+    - Use Key Vault for API key storage
+    - Configure Application Insights integration
+    - Enable managed identities
+    - Set up proper RBAC permissions
+    - Test function deployment and triggers
+
+troubleshooting:
+  common_issues:
+    - issue: "Forwarder not sending logs to Datadog"
+      solutions:
+        - Verify API key is correct and has write permissions
+        - Check DdSite matches your Datadog account region
+        - Verify Lambda has network access to Datadog endpoints
+        - Check CloudWatch logs for forwarder errors
+        - Ensure log source triggers are configured correctly
+
+    - issue: "Lambda timeout errors"
+      solutions:
+        - Increase timeout setting (up to 900 seconds)
+        - Increase memory allocation (improves CPU performance)
+        - Check if log volume exceeds Lambda capacity
+        - Consider implementing batch processing
+
+    - issue: "API key not found errors"
+      solutions:
+        - Verify Secrets Manager ARN is correct
+        - Check Lambda has permission to read secret
+        - Ensure secret contains plaintext API key (not key-value)
+        - Verify SSM parameter path if using SSM
+
+    - issue: "Missing tags on logs"
+      solutions:
+        - Enable DdFetchLambdaTags for Lambda function tags
+        - Enable DdEnrichS3Tags for S3 bucket tags
+        - Enable DdEnrichCloudwatchTags for log group tags
+        - Ensure AWS Resource Collection is enabled in Datadog
+        - Add custom tags using DdTags parameter
+
+examples:
+  cloudformation_basic:
+    description: Basic CloudFormation deployment
+    code: |
+      aws cloudformation create-stack \
+        --stack-name datadog-forwarder \
+        --template-url https://datadog-cloudformation-template.s3.amazonaws.com/aws/forwarder/latest.yaml \
+        --parameters \
+          ParameterKey=DdApiKeySecretArn,ParameterValue=arn:aws:secretsmanager:us-east-1:123456789:secret:DdApiKey \
+          ParameterKey=DdSite,ParameterValue=datadoghq.com \
+          ParameterKey=DdTags,ParameterValue="env:prod,service:logging,version:1.0.0" \
+        --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
+
+  cloudformation_production:
+    description: Production deployment with all recommended settings
+    code: |
+      aws cloudformation create-stack \
+        --stack-name datadog-forwarder-prod \
+        --template-url https://datadog-cloudformation-template.s3.amazonaws.com/aws/forwarder/latest.yaml \
+        --parameters \
+          ParameterKey=DdApiKeySecretArn,ParameterValue=arn:aws:secretsmanager:us-east-1:123456789:secret:DdApiKey \
+          ParameterKey=DdSite,ParameterValue=datadoghq.com \
+          ParameterKey=FunctionName,ParameterValue=DatadogForwarder \
+          ParameterKey=MemorySize,ParameterValue=1024 \
+          ParameterKey=Timeout,ParameterValue=120 \
+          ParameterKey=ReservedConcurrency,ParameterValue=10 \
+          ParameterKey=LogRetentionInDays,ParameterValue=90 \
+          ParameterKey=DdTags,ParameterValue="env:prod,service:logging,version:1.0.0,team:platform" \
+          ParameterKey=DdEnrichS3Tags,ParameterValue=true \
+          ParameterKey=DdEnrichCloudwatchTags,ParameterValue=true \
+          ParameterKey=DdFetchLambdaTags,ParameterValue=true \
+        --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
+
+prompts:
+  deployment_review:
+    description: Review a deployment configuration
+    template: |
+      Review the following deployment configuration for Datadog standards compliance:
+      - Check for security best practices
+      - Validate required parameters
+      - Suggest optimizations
+      - Identify potential issues
+
+  troubleshoot:
+    description: Help troubleshoot deployment issues
+    template: |
+      Analyze the following error/issue:
+      - Identify root cause
+      - Provide step-by-step solution
+      - Reference relevant documentation
+      - Suggest preventive measures
+
+  optimize:
+    description: Optimize existing deployment
+    template: |
+      Review current configuration and suggest optimizations for:
+      - Cost reduction
+      - Performance improvement
+      - Security enhancements
+      - Operational efficiency
+
+learning_resources:
+  - title: Datadog Forwarder Documentation
+    url: https://docs.datadoghq.com/serverless/forwarder/
+  - title: AWS Lambda Best Practices
+    url: https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html
+  - title: CloudFormation Best Practices
+    url: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/best-practices.html
+  - title: Datadog Tagging Best Practices
+    url: https://docs.datadoghq.com/getting_started/tagging/
