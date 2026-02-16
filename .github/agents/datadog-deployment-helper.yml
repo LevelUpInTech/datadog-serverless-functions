@@ -863,6 +863,7 @@ examples:
                   events[index] = waf
           
           # Separate Security Hub findings into individual events
+          # Note: Iterating reversed to safely modify list during iteration
           for event in reversed(events):
               findings = separate_security_hub_findings(event)
               if findings:
