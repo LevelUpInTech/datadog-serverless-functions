@@ -170,7 +170,7 @@ helm repo update
 2. Create a Kubernetes secret for the API key:
 
 ```bash
-kubectl create namespace datadog
+kubectl create namespace datadog --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic datadog-secret \
   --from-literal api-key=<your-datadog-api-key> \
   --namespace datadog
@@ -277,7 +277,8 @@ Create or modify the Agent configuration file:
 Example configuration:
 
 ```yaml
-api_key: <your-datadog-api-key>
+# API key should be set via environment variable DD_API_KEY
+# Do not include api_key in this file for production deployments
 site: datadoghq.com
 
 # Tagging
@@ -298,7 +299,7 @@ process_config:
   enabled: true
 ```
 
-**Security Note**: For production environments, avoid storing the API key directly in the configuration file. Instead, use environment variables or Azure Key Vault integration. For example, set `DD_API_KEY` as an environment variable and remove the `api_key` line from the configuration file. See the [Datadog Agent documentation](https://docs.datadoghq.com/agent/guide/secrets-management/) for secrets management best practices.
+**Security Note**: For production environments, always manage the API key securely. Set the `DD_API_KEY` environment variable instead of including `api_key` in the configuration file. For Azure VMs, use Azure Key Vault integration to retrieve secrets. See the [Datadog Agent documentation](https://docs.datadoghq.com/agent/guide/secrets-management/) for secrets management best practices.
 
 #### Azure-Specific Tags
 
